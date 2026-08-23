@@ -10,11 +10,24 @@
 //! and death detection in both directions: a `Ref` learning its node is gone, and a
 //! `Node` learning the last `Ref` to it is. The second only works because `Node::new`
 //! hands the capability back rather than keeping one.
+//!
+//! every death here is a cooperative one — something in this process is dropped. The
+//! same two directions against a peer *process* that is killed outright live in
+//! `killed_peers.rs`, in a binary of their own so that their spawning cannot perturb the
+//! hangup timing these tests assert on.
+//!
+//! both directions are checked twice: once against an orderly drop in this process, and
+//! once against a peer *process* that is `SIGKILL`ed. The second is the case the design
+//! actually rests on — nothing on the far side gets to run a destructor, send a goodbye,
+//! or unwind a runtime, so the only thing left to notice the death is the kernel closing
+//! the descriptors of a dead process. That is what [`Ref::is_dead`]'s bare `ppoll` and
+//! the node's receive loop are for, and an in-process `drop` cannot tell you whether they
+//! work, because a `drop` is cooperative and a `SIGKILL` is not.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use strong_ipc::{BoundNode, FdVec, Handler, Message, Node, Ref, TrySendError};
+use strong_ipc::{FdVec, Handler, Message, Node, Ref, RefFsBinding, TrySendError};
 
 const PAYLOAD: usize = 4096;
 
@@ -95,20 +108,15 @@ async fn a_ref_outliving_its_node_reports_closed() {
 /// with in-flight sends and lose them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dropping_the_last_ref_still_drains_the_queue() {
-	let path = socket_path("drain");
 	let (gate_tx, gate_rx) = tokio::sync::watch::channel(false);
 	let seen = Arc::new(Mutex::new(Vec::new()));
-	let _server = BoundNode::bind(
-		&path,
-		Gated {
-			gate: gate_rx,
-			seen: seen.clone(),
-		},
-	)
+	// the node holds no capability to itself, so `client` is the last Ref outright and
+	// dropping it really is the case under test
+	let (_server, client) = Node::new(Gated {
+		gate: gate_rx,
+		seen: seen.clone(),
+	})
 	.unwrap();
-
-	// a Ref we own outright, rather than one borrowed from a Node that would keep it alive
-	let client = Ref::connect(&path).await.unwrap();
 
 	// fill the socket, then the queue, so there is a real backlog to lose
 	let mut accepted = 0u32;
@@ -158,20 +166,14 @@ async fn dropping_the_last_ref_still_drains_the_queue() {
 /// running" the moment an off-runtime sender fills its socket.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_outbox_can_be_built_from_a_non_runtime_thread() {
-	let path = socket_path("offthread");
 	let (gate_tx, gate_rx) = tokio::sync::watch::channel(false);
 	let seen = Arc::new(Mutex::new(Vec::new()));
-	let _server = BoundNode::bind(
-		&path,
-		Gated {
-			gate: gate_rx,
-			seen: seen.clone(),
-		},
-	)
-	.unwrap();
-
 	// constructed on the runtime, so it captures a handle...
-	let client = Ref::connect(&path).await.unwrap();
+	let (_server, client) = Node::new(Gated {
+		gate: gate_rx,
+		seen: seen.clone(),
+	})
+	.unwrap();
 
 	// ...then used from a plain OS thread with no runtime context at all. the socket fills
 	// partway through, so it is this thread that ends up building the outbox.
@@ -257,14 +259,17 @@ async fn a_ref_notices_its_node_going_away() {
 	));
 }
 
-/// a ref taken from a `BoundNode` sees the server go, not just a peer socketpair
+/// a ref that arrived over a bound path sees the server go, not just a peer socketpair
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_connected_ref_notices_the_server_going_away() {
 	let path = socket_path("death");
-	let server = BoundNode::bind(&path, Null).unwrap();
+	let (server, server_ref) = Node::new(Null).unwrap();
+	let binding = RefFsBinding::new(server_ref, &path).unwrap();
 	let client = Ref::connect(&path).await.unwrap();
 	assert!(!client.is_dead());
 
+	// the binding holds the node's only other capability, so both have to go
+	drop(binding);
 	drop(server);
 	tokio::time::timeout(Duration::from_secs(5), client.death_notification())
 		.await
@@ -324,6 +329,7 @@ async fn a_node_reports_a_receive_loop_that_stopped_on_its_own() {
 	// and it propagates: the loop ending drops the node's socket, so the still-live Ref
 	// on the other end hangs up too. the tombstone is declared after that drop, so by the
 	// time the node reports dead the Ref already agrees — no race between the two
+	eprintln!("TRACE {:?} notified", std::time::Instant::now());
 	assert!(
 		node_ref.is_dead(),
 		"a node that stopped receiving left its Refs thinking they could still reach it"
