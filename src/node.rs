@@ -56,7 +56,7 @@ impl<H: Handler> Node<H> {
 		// built out here, not in the task: `AsyncFd::new` needs runtime context, and
 		// failing to register should be this call's error rather than a task that dies
 		let socket = Reactive::new(rx)?;
-		let death = Arc::new(Death::default());
+		let death = Arc::new(Death::new());
 		// built before the task rather than at the end, because the entry filed under
 		// `local-handlers` is keyed on this ref's socket identity
 		let node_ref = Ref::from_fd(tx);
@@ -121,6 +121,35 @@ impl<H: Handler> Node<H> {
 	/// ```
 	pub async fn death_notification(&self) {
 		self.death.wait().await;
+	}
+	/// the [`Death`] of this node, to hold and wait on instead of the node itself
+	///
+	/// the borrow in [`Node::death_notification`] looks free and isn't: a caller who
+	/// wants to wait in a spawned task has to own the node for the whole wait, which
+	/// makes the waiter a second owner of the thing it is waiting on. A node kept alive
+	/// is a node still receiving, so the waiter goes on feeding the handler messages
+	/// long after whatever it belonged to has gone — and it cannot hold a `Weak` to opt
+	/// out, because the borrowed future would not live long enough.
+	///
+	/// the wait never needed the node. This is the same `Arc<Death>` the receive loop
+	/// already shares, so hold this, hold a `Weak` to the node, and the node still dies
+	/// exactly when its last `Ref` goes.
+	///
+	/// ```no_run
+	/// # async fn f<H: strong_ipc::Handler>(handler: H) -> Result<(), strong_ipc::NodeError> {
+	/// let (node, capability) = strong_ipc::Node::new(handler)?;
+	/// let death = node.death_notifier();
+	/// let node = std::sync::Arc::new(node);
+	/// let weak = std::sync::Arc::downgrade(&node);
+	/// tokio::spawn(async move {
+	///     death.wait().await; // owns no share of the node
+	///     let Some(node) = weak.upgrade() else { return }; // gone on its own terms
+	///     let _ = node;
+	/// });
+	/// # Ok(()) }
+	/// ```
+	pub fn death_notifier(&self) -> Arc<Death> {
+		self.death.clone()
 	}
 	/// the handler this node is feeding
 	///
