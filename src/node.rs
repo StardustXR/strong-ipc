@@ -3,7 +3,7 @@
 use crate::{
 	Ref,
 	error::NodeError,
-	death::Death,
+	death::{Death, DeathNotifier},
 	message::FdVec,
 	wire::{self, MAX_ANCILLARY_BUFFER_SIZE, MAX_MESSAGE_SIZE, Reactive},
 };
@@ -148,8 +148,8 @@ impl<H: Handler> Node<H> {
 	/// });
 	/// # Ok(()) }
 	/// ```
-	pub fn death_notifier(&self) -> Arc<Death> {
-		self.death.clone()
+	pub fn death_notifier(&self) -> DeathNotifier {
+		DeathNotifier::node(self.death.clone())
 	}
 	/// the handler this node is feeding
 	///

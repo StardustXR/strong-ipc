@@ -1,6 +1,7 @@
 //! `Ref` — a sending capability, and the two-tier send that keeps it cheap
 
 use crate::{
+	death::DeathNotifier,
 	error::{SendError, TrySendError},
 	message::Message,
 	outbox::Outbox,
@@ -423,6 +424,16 @@ impl Ref {
 	/// if the registration cannot be made at all — descriptor limit, no runtime — this
 	/// never resolves, rather than claiming a death that has not happened. Guard against
 	/// that with a timeout if a stuck waiter would wedge you.
+	/// this ref's death as an owned handle, for waiting somewhere else
+	///
+	/// the counterpart to [`crate::Node::death_notifier`], and the reason both exist: a
+	/// spawned task can hold one of these and wait, where [`Ref::death_notification`]
+	/// borrows and would tie the task to this ref's scope. Holding it holds the ref, so
+	/// the node stays reachable — see [`DeathNotifier`] for when that matters.
+	pub fn death_notifier(&self) -> DeathNotifier {
+		DeathNotifier::node_ref(self.clone())
+	}
+
 	pub async fn death_notification(&self) {
 		if self.is_dead() {
 			return;

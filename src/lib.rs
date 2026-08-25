@@ -90,7 +90,7 @@ mod outbox;
 pub mod wire;
 
 pub use capability::{Ref, RefFsBinding};
-pub use death::Death;
+pub use death::DeathNotifier;
 pub use error::{NodeError, SendError, TrySendError};
 pub use message::{FdVec, Message};
 pub use node::{Handler, Node};
