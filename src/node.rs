@@ -2,15 +2,13 @@
 
 use crate::{
 	Ref,
-	error::NodeError,
 	death::{Death, DeathNotifier},
+	error::NodeError,
 	message::FdVec,
-	wire::{self, MAX_ANCILLARY_BUFFER_SIZE, MAX_MESSAGE_SIZE, Reactive},
+	wire::{self, MAX_ANCILLARY_BUFFER_SIZE, MAX_MESSAGE_SIZE, Reactive, maximize_fd_limit_lazy},
 };
 use rustix::net::UCred;
-use std::{
-	mem::MaybeUninit, ops::Deref, os::fd::AsFd, sync::Arc
-};
+use std::{mem::MaybeUninit, ops::Deref, os::fd::AsFd, sync::Arc};
 use tokio_util::task::AbortOnDrop;
 
 pub trait Handler: Send + Sync + 'static {
@@ -51,6 +49,7 @@ impl<H: Handler> Node<H> {
                   to itself, so dropping the Ref here hangs the node's socket up \
                   immediately and it will never receive anything"]
 	pub fn new_raw(handler: Arc<H>) -> Result<(Node<H>, Ref), NodeError> {
+		maximize_fd_limit_lazy();
 		let (tx, rx) = wire::socketpair()?;
 		wire::enable_credentials(rx.as_fd());
 		// built out here, not in the task: `AsyncFd::new` needs runtime context, and
@@ -209,11 +208,11 @@ impl<H: Handler> std::fmt::Debug for Node<H> {
 	}
 }
 impl<H: Handler> Deref for Node<H> {
-    type Target = Arc<H>;
+	type Target = Arc<H>;
 
-    fn deref(&self) -> &Self::Target {
-        self.handler()
-    }
+	fn deref(&self) -> &Self::Target {
+		self.handler()
+	}
 }
 
 /// the one spot where a message on the wire becomes a handler call

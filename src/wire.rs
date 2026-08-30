@@ -19,6 +19,9 @@ use rustix::net::{
 	UCred,
 };
 use smallvec::SmallVec;
+use std::fs::read_to_string;
+use std::io::{Stderr, stderr, stdout};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
 	io::{IoSlice, IoSliceMut},
 	mem::MaybeUninit,
@@ -124,6 +127,7 @@ pub fn set_fd_limit(limit: usize) -> std::io::Result<usize> {
 	Ok(as_count(current))
 }
 
+pub const RECOMMENDED_FD_MINIMUM: u64 = 8192;
 /// raises this process's open-descriptor limit to its hard ceiling, returning the new soft
 /// limit
 ///
@@ -146,6 +150,34 @@ pub fn maximize_fd_limit() -> std::io::Result<usize> {
 	// None is RLIM_INFINITY on both fields: no ceiling to raise to, nothing to raise
 	let limit = getrlimit(Resource::Nofile);
 
+	if let Some(hard_limit) = limit.maximum
+		&& hard_limit < RECOMMENDED_FD_MINIMUM
+	{
+		let kernel_max = read_to_string("/proc/sys/fs/nr_open")
+			.ok()
+			.and_then(|v| v.parse::<u64>().ok());
+		use std::io::Write;
+        // taking the lock to prevent printing between the warning lines
+		let mut std_err = stderr().lock();
+        // purely taking this lock to prevent stdout to interfere with the printing of this warning
+		let std_out = stdout().lock();
+
+		_ = writeln!(
+			std_err,
+			"WARNING: the maximum file descriptor limit is {hard_limit} which is less than strong-ipcs recommended minimum of {RECOMMENDED_FD_MINIMUM}."
+		);
+		if let Some(kernel_max) = kernel_max {
+            // 512 * 1024 is the default systemd limit
+			let adjusted_recommendation = (512 * 1024).min(kernel_max);
+			_ = writeln!(
+				std_err,
+				"please consider increasing your systems hard fd limit, the current kernel maximally supports {kernel_max}, the recommended limit is {adjusted_recommendation}"
+			);
+		}
+        drop(std_err);
+        drop(std_out);
+	}
+
 	if limit.current != limit.maximum {
 		setrlimit(
 			Resource::Nofile,
@@ -157,6 +189,21 @@ pub fn maximize_fd_limit() -> std::io::Result<usize> {
 	}
 
 	Ok(as_count(limit.maximum))
+}
+static MAXIMIZED_FD_LIMIT: AtomicBool = AtomicBool::new(false);
+/// used to maximize the fd limit once, this is automatically called on [`crate::Ref::connect`] and [`crate::Node::new`]/[`crate::Node::new_raw`]
+/// for more information see [`maximize_fd_limit`]
+pub fn maximize_fd_limit_lazy() {
+	if MAXIMIZED_FD_LIMIT.load(Ordering::Relaxed) {
+		return;
+	}
+
+	match maximize_fd_limit() {
+		Ok(v) => {
+			MAXIMIZED_FD_LIMIT.store(true, Ordering::Relaxed);
+		}
+		Err(_) => todo!(),
+	}
 }
 
 fn flags_for_send() -> SendFlags {

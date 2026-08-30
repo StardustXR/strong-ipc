@@ -5,7 +5,7 @@ use crate::{
 	error::{SendError, TrySendError},
 	message::Message,
 	outbox::Outbox,
-	wire::{self, Reactive},
+	wire::{self, Reactive, maximize_fd_limit_lazy},
 };
 use dashmap::{DashMap, mapref::entry::Entry};
 use std::{
@@ -182,9 +182,9 @@ impl RefFsBinding {
 			path: path.as_ref().to_path_buf(),
 		})
 	}
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
+	pub fn path(&self) -> &Path {
+		&self.path
+	}
 
 	fn lock_path(dir: &Path) -> PathBuf {
 		let mut lock = dir.as_os_str().to_owned();
@@ -222,6 +222,7 @@ impl Ref {
 	/// nothing comes back this way, if you want a reply, put a ref of your own on the
 	/// message with [`Message::add_ref`]
 	pub async fn connect<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+		maximize_fd_limit_lazy();
 		// `connect` on an AF_UNIX socket completes without blocking unless the listener's
 		// backlog is full, in which case it reports `WouldBlock` and the caller retries —
 		// the connection is not queued, so there is nothing to wait on
