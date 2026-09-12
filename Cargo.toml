@@ -2,6 +2,9 @@
 name = "strong-ipc"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "Capability-based p2p ipc using seqpacket socketpairs for communication and fds for capabilities"
+authors = ["Nova King <technobaboo@proton.me>"]
 
 [features]
 # `Ref::local_handler`: reaching the handler behind a ref that leads to one of our own
