@@ -235,10 +235,9 @@ impl Ref {
 			.fds
 			.into_iter()
 			.next()
-			.ok_or(std::io::Error::new(
-				std::io::ErrorKind::UnexpectedEof,
-				"Failed to read Ref fd",
-			))?;
+			.ok_or_else(|| {
+				std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "Failed to read Ref fd")
+			})?;
 
 		Ok(Self::from_fd(fd))
 	}
