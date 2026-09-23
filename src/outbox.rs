@@ -41,9 +41,10 @@ impl Outbox {
 		fd: &OwnedFd,
 		runtime: Option<&tokio::runtime::Handle>,
 	) -> std::io::Result<Self> {
-		let runtime = runtime
-			.cloned()
-			.unwrap_or_else(tokio::runtime::Handle::current);
+		let runtime = match runtime {
+			Some(runtime) => runtime.clone(),
+			None => tokio::runtime::Handle::try_current().map_err(std::io::Error::other)?,
+		};
 
 		// the drain task needs the socket *in* the reactor, so give it a dup and leave
 		// the `Ref`'s own fd unregistered. both name the same open file description, so a

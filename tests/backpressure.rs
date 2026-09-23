@@ -93,3 +93,24 @@ async fn a_full_queue_is_reported_as_full_never_as_closed() {
 	let expected: Vec<u32> = (0..total).collect();
 	assert_eq!(*seen, expected, "backpressure reordered accepted messages");
 }
+
+/// a `Ref` built and backed up with no runtime anywhere has nowhere to put an outbox,
+/// which has to be an error rather than a panic out of `try_send`
+#[test]
+fn backing_up_off_runtime_does_not_panic() {
+	use rustix::net::{AddressFamily, SocketFlags, SocketType, socketpair};
+
+	let (fd, _peer) = socketpair(
+		AddressFamily::UNIX,
+		SocketType::SEQPACKET,
+		SocketFlags::NONBLOCK | SocketFlags::CLOEXEC,
+		None,
+	)
+	.unwrap();
+	let r = strong_ipc::Ref::from_owned_fd(fd);
+	let full = (0..10_000).find_map(|_| r.try_send(Message::from_data(vec![0; PAYLOAD])).err());
+	assert!(
+		matches!(full, Some(TrySendError::Closed(_))),
+		"a full socket with no runtime to drain it should report Closed"
+	);
+}

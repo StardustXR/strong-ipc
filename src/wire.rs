@@ -194,15 +194,11 @@ static MAXIMIZED_FD_LIMIT: AtomicBool = AtomicBool::new(false);
 /// used to maximize the fd limit once, this is automatically called on [`crate::Ref::connect`] and [`crate::Node::new`]/[`crate::Node::new_raw`]
 /// for more information see [`maximize_fd_limit`]
 pub fn maximize_fd_limit_lazy() {
-	if MAXIMIZED_FD_LIMIT.load(Ordering::Relaxed) {
+	if MAXIMIZED_FD_LIMIT.swap(true, Ordering::Relaxed) {
 		return;
 	}
-
-	match maximize_fd_limit() {
-		Ok(v) => {
-			MAXIMIZED_FD_LIMIT.store(true, Ordering::Relaxed);
-		}
-		Err(_) => todo!(),
+	if let Err(e) = maximize_fd_limit() {
+		eprintln!("strong-ipc: could not raise the fd limit: {e}");
 	}
 }
 
