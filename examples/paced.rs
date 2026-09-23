@@ -113,11 +113,9 @@ impl Handler for EchoHandler {
 }
 
 async fn server_main(path: PathBuf) {
-	let (_node,node_ref) = Node::new(
-		EchoHandler {
-			cached: Mutex::new(None),
-		},
-	)
+	let (_node, node_ref) = Node::new(EchoHandler {
+		cached: Mutex::new(None),
+	})
 	.expect("server: node creation failed");
 	let _ref_binding = RefFsBinding::new(node_ref, &path).expect("server: bind failed");
 	// a second listener that skips strong-ipc entirely, so --raw can measure what the

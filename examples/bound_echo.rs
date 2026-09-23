@@ -28,7 +28,7 @@ impl Handler for EchoReplyHandler {
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() {
 	let path = std::env::temp_dir().join(format!("strong-ipc-echo-{}.sock", std::process::id()));
-	let (_echo_node,node_ref) = Node::new(EchoHandler).unwrap();
+	let (_echo_node, node_ref) = Node::new(EchoHandler).unwrap();
 	let _ref_binding = RefFsBinding::new(node_ref, &path).unwrap();
 
 	let echo_ref = Ref::connect(&path).await.unwrap();

@@ -63,7 +63,9 @@ impl Handler for Echo {
 #[tokio::test]
 async fn reaches_its_own_handler() {
 	let (node, node_ref) = Node::new(Counter("mine")).expect("node");
-	let got = node_ref.local_handler::<Counter>().expect("should be local");
+	let got = node_ref
+		.local_handler::<Counter>()
+		.expect("should be local");
 	assert_eq!(got.0, "mine");
 	assert!(Arc::ptr_eq(&got, node.handler()));
 }

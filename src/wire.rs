@@ -157,9 +157,9 @@ pub fn maximize_fd_limit() -> std::io::Result<usize> {
 			.ok()
 			.and_then(|v| v.parse::<u64>().ok());
 		use std::io::Write;
-        // taking the lock to prevent printing between the warning lines
+		// taking the lock to prevent printing between the warning lines
 		let mut std_err = stderr().lock();
-        // purely taking this lock to prevent stdout to interfere with the printing of this warning
+		// purely taking this lock to prevent stdout to interfere with the printing of this warning
 		let std_out = stdout().lock();
 
 		_ = writeln!(
@@ -167,15 +167,15 @@ pub fn maximize_fd_limit() -> std::io::Result<usize> {
 			"WARNING: the maximum file descriptor limit is {hard_limit} which is less than strong-ipcs recommended minimum of {RECOMMENDED_FD_MINIMUM}."
 		);
 		if let Some(kernel_max) = kernel_max {
-            // 512 * 1024 is the default systemd limit
+			// 512 * 1024 is the default systemd limit
 			let adjusted_recommendation = (512 * 1024).min(kernel_max);
 			_ = writeln!(
 				std_err,
 				"please consider increasing your systems hard fd limit, the current kernel maximally supports {kernel_max}, the recommended limit is {adjusted_recommendation}"
 			);
 		}
-        drop(std_err);
-        drop(std_out);
+		drop(std_err);
+		drop(std_out);
 	}
 
 	if limit.current != limit.maximum {

@@ -38,7 +38,8 @@ use std::{
 ///
 /// entries are [`Weak`], so being in here keeps no handler alive, and the map is bounded
 /// by the number of live local nodes.
-static LOCALS: LazyLock<DashMap<SocketId, Weak<dyn Any + Send + Sync>>> = LazyLock::new(DashMap::new);
+static LOCALS: LazyLock<DashMap<SocketId, Weak<dyn Any + Send + Sync>>> =
+	LazyLock::new(DashMap::new);
 
 /// files a node's handler for as long as that node can still receive
 ///
