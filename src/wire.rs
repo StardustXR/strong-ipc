@@ -21,7 +21,10 @@ use rustix::net::{
 use smallvec::SmallVec;
 use std::fs::read_to_string;
 use std::io::{Stderr, stderr, stdout};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+	OnceLock,
+	atomic::{AtomicBool, Ordering},
+};
 use std::{
 	io::{IoSlice, IoSliceMut},
 	mem::MaybeUninit,
@@ -127,6 +130,18 @@ pub fn set_fd_limit(limit: usize) -> std::io::Result<usize> {
 	Ok(as_count(current))
 }
 
+static INHERITED_FD_LIMIT: OnceLock<usize> = OnceLock::new();
+
+/// the soft limit this process started with, before strong-ipc raised it
+///
+/// stands in for what everything else in the session runs at, since that's the number
+/// the kernel holds other processes' SCM_RIGHTS sends to
+pub(crate) fn inherited_fd_limit() -> usize {
+	*INHERITED_FD_LIMIT.get_or_init(|| {
+		as_count(rustix::process::getrlimit(rustix::process::Resource::Nofile).current)
+	})
+}
+
 pub const RECOMMENDED_FD_MINIMUM: u64 = 8192;
 /// raises this process's open-descriptor limit to its hard ceiling, returning the new soft
 /// limit
@@ -149,6 +164,7 @@ pub fn maximize_fd_limit() -> std::io::Result<usize> {
 
 	// None is RLIM_INFINITY on both fields: no ceiling to raise to, nothing to raise
 	let limit = getrlimit(Resource::Nofile);
+	let _ = INHERITED_FD_LIMIT.set(as_count(limit.current));
 
 	if let Some(hard_limit) = limit.maximum
 		&& hard_limit < RECOMMENDED_FD_MINIMUM
@@ -300,6 +316,19 @@ pub(crate) fn send_now(fd: BorrowedFd<'_>, message: &Message) -> std::io::Result
 	}
 	net::sendmsg(fd, &iov, &mut control, flags_for_send())?;
 	Ok(())
+}
+
+/// bytes this socket has sent that the far end hasn't read yet
+///
+/// a unix socket stays charged for each message until the receiver dequeues it, which is
+/// the same moment its descriptors stop counting against the uid
+#[allow(unsafe_code)]
+pub(crate) fn unsent(fd: BorrowedFd<'_>) -> std::io::Result<usize> {
+	use rustix::ioctl::{Getter, Opcode, ioctl};
+	const SIOCOUTQ: Opcode = libc::TIOCOUTQ as Opcode;
+	// SAFETY: SIOCOUTQ writes a single int, which is the output Getter is typed for
+	let n = unsafe { ioctl(fd, Getter::<SIOCOUTQ, std::ffi::c_int>::new()) }?;
+	Ok(n.max(0) as usize)
 }
 
 /// what came off the wire
@@ -484,6 +513,10 @@ impl Reactive {
 		}
 	}
 
+	pub(crate) fn as_fd(&self) -> BorrowedFd<'_> {
+		self.io.get_ref().as_fd()
+	}
+
 	pub(crate) async fn accept(&self) -> std::io::Result<OwnedFd> {
 		loop {
 			let mut guard = self.io.readable().await?;
@@ -492,5 +525,38 @@ impl Reactive {
 				Err(_would_block) => continue,
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// the whole budget rests on this reading empty exactly when the far end has read
+	/// everything, descriptors included
+	#[test]
+	fn unsent_counts_until_the_far_end_reads() {
+		let (tx, rx) = socketpair().unwrap();
+		assert_eq!(unsent(tx.as_fd()).unwrap(), 0);
+
+		let (_, cargo) = socketpair().unwrap();
+		let mut m = Message::from_data(vec![0; 64]);
+		m.add_fd(cargo);
+		send_now(tx.as_fd(), &m).unwrap();
+		send_now(tx.as_fd(), &m).unwrap();
+		let both = unsent(tx.as_fd()).unwrap();
+		assert!(both >= 128, "two queued messages read as {both} bytes");
+
+		let mut buf = [0; 64];
+		let mut control = [MaybeUninit::uninit(); MAX_ANCILLARY_BUFFER_SIZE];
+		recv_now(rx.as_fd(), &mut buf, &mut control).unwrap();
+		let one = unsent(tx.as_fd()).unwrap();
+		assert!(
+			one > 1 && one < both,
+			"one queued message read as {one} of {both}"
+		);
+
+		recv_now(rx.as_fd(), &mut buf, &mut control).unwrap();
+		assert_eq!(unsent(tx.as_fd()).unwrap(), 0);
 	}
 }

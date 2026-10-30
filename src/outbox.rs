@@ -10,6 +10,7 @@
 
 use crate::{
 	error::{SendError, TrySendError},
+	ledger::{self, Debt},
 	message::Message,
 	wire::Reactive,
 };
@@ -40,6 +41,7 @@ impl Outbox {
 	pub(crate) fn build(
 		fd: &OwnedFd,
 		runtime: Option<&tokio::runtime::Handle>,
+		debt: Arc<Debt>,
 	) -> std::io::Result<Self> {
 		let runtime = match runtime {
 			Some(runtime) => runtime.clone(),
@@ -64,7 +66,7 @@ impl Outbox {
 		// deliberately not an AbortOnDrop: once the last `Ref` goes, mpsc closes the
 		// channel but still drains what's queued before `recv()` gives `None`. aborting
 		// would race with in-flight sends and lose them
-		runtime.spawn(Self::drain(receiver, socket, pending.clone()));
+		runtime.spawn(Self::drain(receiver, socket, pending.clone(), debt));
 		Ok(Self { sender, pending })
 	}
 
@@ -112,19 +114,33 @@ impl Outbox {
 		mut message_rx: mpsc::Receiver<Message>,
 		socket: Reactive,
 		pending: Arc<AtomicUsize>,
+		debt: Arc<Debt>,
 	) -> std::io::Result<()> {
-		loop {
-			let Some(message) = message_rx.recv().await else {
-				return Ok(());
-			};
-			// the same `wire::send_now` the inline fast path uses, with readiness in
-			// front of it — one implementation, so the two paths cannot drift apart
-			let result = socket.send(&message).await;
-			// released only now, so the fast path stays shut until this really is on the
-			// wire. on error too — the message is gone either way, and leaving the count
-			// raised would wedge the fast path forever
-			pending.fetch_sub(1, Ordering::Relaxed);
-			result?;
+		// the `Ref` may be gone by the time this sends its last message, so the debt that
+		// leaves with this task is handed over here as well as in `RefInner::drop`
+		let result = async {
+			while let Some(message) = message_rx.recv().await {
+				let fds = message.fds().len();
+				ledger::claim(fds).await;
+				// the same `wire::send_now` the inline fast path uses, with readiness in
+				// front of it — one implementation, so the two paths cannot drift apart
+				let result = socket.send(&message).await;
+				// released only now, so the fast path stays shut until this really is on the
+				// wire. on error too — the message is gone either way, and leaving the count
+				// raised would wedge the fast path forever
+				pending.fetch_sub(1, Ordering::Relaxed);
+				match result {
+					Ok(()) => debt.incur(fds),
+					Err(e) => {
+						ledger::release(fds);
+						return Err(e);
+					}
+				}
+			}
+			Ok(())
 		}
+		.await;
+		debt.hand_over(socket.as_fd());
+		result
 	}
 }

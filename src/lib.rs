@@ -17,6 +17,13 @@
 //! Both hand the [`Message`] back on failure, so a caller can retry with it rather than
 //! rebuilding it. Prefer `send` — spinning on `Full` is a busy-wait.
 //!
+//! Descriptors on the wire are budgeted too. The kernel counts them per uid, and every
+//! other process of yours starts failing its own fd sends once that count passes its
+//! limit, usually 1024, which dbus-broker and wayland clients treat as fatal. So a
+//! process keeps at most an eighth of the limit it started with in flight, and a message
+//! carrying descriptors past that waits in the outbox until receivers catch up. How many
+//! a process *holds* once they have landed is not limited by this at all.
+//!
 //! A payload over [`MAX_MESSAGE_SIZE`] is refused at the call site rather than truncated
 //! at the far end. That one constant is also every receive buffer's size, so an accepted
 //! send can never overrun a receiver: the failure is visible, early, and belongs to the
@@ -47,8 +54,9 @@
 //!
 //! # Module map
 //!
-//! The crate is `forbid(unsafe_code)`: every syscall goes through `rustix`'s typed,
-//! safe wrappers, so there is no raw `msghdr` construction anywhere.
+//! The crate is `deny(unsafe_code)`: every syscall goes through `rustix`'s typed,
+//! safe wrappers, so there is no raw `msghdr` construction anywhere. The one exception is
+//! the `SIOCOUTQ` ioctl in `wire::unsent`, which rustix has no safe wrapper for.
 //!
 //! | module | what lives there |
 //! |---|---|
@@ -57,6 +65,7 @@
 //! | `capability` | [`Ref`] and its two-tier send |
 //! | `outbox` | the backlog a `Ref` grows only once its socket backs up |
 //! | `node` | [`Handler`], [`Node`], [`BoundNode`], and the receive loop |
+//! | `ledger` | the budget on descriptors sent but not yet received |
 //! | `death` | the latch behind [`Node::is_dead`]; `Ref`'s answer comes from the kernel |
 //!
 //! # Knowing when the other end is gone
@@ -77,11 +86,12 @@
 //! ended by its own last `Ref` rather than by you dropping it. It stores nothing and
 //! spawns nothing, because the receive loop was always the thing holding the handler.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 mod capability;
 mod death;
 mod error;
+mod ledger;
 #[cfg(feature = "local-handlers")]
 mod local;
 mod message;

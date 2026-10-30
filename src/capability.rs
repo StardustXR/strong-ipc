@@ -3,6 +3,7 @@
 use crate::{
 	death::DeathNotifier,
 	error::{SendError, TrySendError},
+	ledger::{self, Debt},
 	message::Message,
 	outbox::Outbox,
 	wire::{self, Reactive, maximize_fd_limit_lazy},
@@ -45,6 +46,17 @@ pub(crate) type SocketId = (u64, u64);
 /// between two of its own nodes. Its size is bounded by the number of live `Ref`s.
 static REFS: LazyLock<DashMap<SocketId, Weak<RefInner>>> = LazyLock::new(DashMap::new);
 
+/// hands every live `Ref`'s outstanding debt to the ledger, paying off whatever has drained
+///
+/// the `Weak`s are collected first because upgrading one can make us its last holder, and
+/// its drop unfiles it from `REFS`, which would deadlock on the shard this was iterating
+pub(crate) fn sweep() {
+	let refs: Vec<_> = REFS.iter().map(|r| r.value().clone()).collect();
+	for inner in refs.iter().filter_map(Weak::upgrade) {
+		inner.debt.hand_over(inner.fd.as_fd());
+	}
+}
+
 fn socket_id(fd: BorrowedFd<'_>) -> std::io::Result<SocketId> {
 	let stat = rustix::fs::fstat(fd)?;
 	Ok((stat.st_dev, stat.st_ino))
@@ -64,6 +76,8 @@ struct RefInner {
 	/// sync and may not be running on a runtime thread
 	runtime: Option<tokio::runtime::Handle>,
 	outbox: OnceLock<Outbox>,
+	/// shared with the outbox's drain task, which sends on this socket too
+	debt: Arc<Debt>,
 	/// built only if someone actually awaits [`Ref::death_notification`]
 	///
 	/// same bargain as the outbox: a reactor registration is exactly what a `Ref` exists
@@ -80,6 +94,7 @@ impl RefInner {
 			id,
 			runtime: tokio::runtime::Handle::try_current().ok(),
 			outbox: OnceLock::new(),
+			debt: Arc::default(),
 			death: OnceLock::new(),
 		}
 	}
@@ -88,7 +103,7 @@ impl RefInner {
 		if let Some(outbox) = self.outbox.get() {
 			return Ok(outbox);
 		}
-		let built = Outbox::build(&self.fd, self.runtime.as_ref())?;
+		let built = Outbox::build(&self.fd, self.runtime.as_ref(), self.debt.clone())?;
 		// a concurrent caller may have got there first; theirs is as good as ours, so
 		// ours drops here — closing its channel, which retires the task it just spawned
 		let _ = self.outbox.set(built);
@@ -96,6 +111,13 @@ impl RefInner {
 			.outbox
 			.get()
 			.expect("just set, or set by whoever raced us"))
+	}
+
+	fn claim(&self, fds: usize) -> bool {
+		fds == 0 || {
+			self.debt.settle(self.fd.as_fd());
+			ledger::try_claim(fds)
+		}
 	}
 
 	/// the socket registered with the reactor, so a hangup can be awaited
@@ -136,6 +158,7 @@ impl AsFd for Ref {
 
 impl Drop for RefInner {
 	fn drop(&mut self) {
+		self.debt.hand_over(self.fd.as_fd());
 		let Some(id) = self.id else { return };
 		// `self.fd` is still open here — a struct's fields drop after its `Drop` body —
 		// so the kernel cannot yet have reissued this inode number to a different socket.
@@ -499,16 +522,26 @@ impl Ref {
 		let backed_up = self.inner.outbox.get().is_some_and(Outbox::is_backed_up);
 		// a message with more fds than one `SCM_RIGHTS` can carry would fail the inline
 		// build; leave it to the task so oversized sends fail exactly as they used to
-		let inline_ok = message.fds().len() <= wire::MAX_FDS && !backed_up;
+		let fds = message.fds().len();
+		// claimed last, so nothing is held against the budget unless it is about to be sent.
+		// out of budget, the message queues and the drain task waits for room
+		let inline_ok = fds <= wire::MAX_FDS && !backed_up && self.inner.claim(fds);
 		if inline_ok {
 			match wire::send_now(self.inner.fd.as_fd(), &message) {
-				Ok(()) => return Ok(()),
+				Ok(()) => {
+					self.inner.debt.incur(fds);
+					return Ok(());
+				}
 				Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
 					// socket buffer is full, so fall through and let the task drain it
+					ledger::release(fds);
 				}
 				// the peer is gone or the socket is broken. a `Ref` that can't reach its
 				// node is as dead as a closed channel, so report it the same way
-				Err(_) => return Err(TrySendError::Closed(message)),
+				Err(_) => {
+					ledger::release(fds);
+					return Err(TrySendError::Closed(message));
+				}
 			}
 		}
 		// first time we've needed the queue on this ref, so pay for it now
