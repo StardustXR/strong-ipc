@@ -2,6 +2,7 @@
 
 use std::io::Read;
 use std::os::fd::OwnedFd;
+use std::sync::Arc;
 use std::time::Duration;
 use strong_ipc::{FdVec, Handler, Message, Node, Ref, TrySendError};
 
@@ -11,7 +12,12 @@ struct Collector {
 }
 
 impl Handler for Collector {
-	async fn handle(&self, data: &mut [u8], fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		let _ = self.tx.send((data.to_vec(), fds.into_iter().collect()));
 	}
 }
@@ -86,7 +92,12 @@ async fn zero_length_message_looks_like_a_hangup() {
 /// echoes whatever it receives back on the capability it was handed
 struct Echo;
 impl Handler for Echo {
-	async fn handle(&self, data: &mut [u8], fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		let Some(fd) = fds.into_iter().next() else {
 			return;
 		};
@@ -142,7 +153,7 @@ struct Creds {
 	tx: tokio::sync::mpsc::UnboundedSender<Option<strong_ipc::UCred>>,
 }
 impl Handler for Creds {
-	async fn handle(&self, _d: &mut [u8], _f: FdVec, creds: Option<strong_ipc::UCred>) {
+	async fn handle(self: &Arc<Self>, _d: &mut [u8], _f: FdVec, creds: Option<strong_ipc::UCred>) {
 		let _ = self.tx.send(creds);
 	}
 }

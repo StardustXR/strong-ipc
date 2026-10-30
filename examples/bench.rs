@@ -184,7 +184,12 @@ struct EchoHandler {
 }
 
 impl Handler for EchoHandler {
-	async fn handle(&self, data: &mut [u8], fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		if data == b"QUIT" {
 			std::process::exit(0);
 		}
@@ -261,7 +266,12 @@ struct ReplyHandler {
 }
 
 impl Handler for ReplyHandler {
-	async fn handle(&self, data: &mut [u8], _fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		_fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		self.received.fetch_add(1, Ordering::Relaxed);
 		self.bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
 		let _ = self.tx.send(data.len());

@@ -11,6 +11,7 @@
 //! is stale by definition and gets cleaned up rather than refused.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use strong_ipc::{FdVec, Handler, Message, Node, Ref, RefFsBinding};
@@ -40,7 +41,12 @@ struct Echo {
 }
 
 impl Handler for Echo {
-	async fn handle(&self, data: &mut [u8], fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		self.served.fetch_add(1, Ordering::Relaxed);
 		let Some(fd) = fds.into_iter().next() else {
 			return;
@@ -73,7 +79,12 @@ struct Collector {
 	tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 }
 impl Handler for Collector {
-	async fn handle(&self, data: &mut [u8], _fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		_fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		let _ = self.tx.send(data.to_vec());
 	}
 }

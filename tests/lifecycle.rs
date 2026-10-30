@@ -46,7 +46,12 @@ struct Gated {
 }
 
 impl Handler for Gated {
-	async fn handle(&self, data: &mut [u8], _fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		_fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		let mut gate = self.gate.clone();
 		while !*gate.borrow_and_update() {
 			if gate.changed().await.is_err() {
@@ -65,14 +70,14 @@ struct Counting {
 	seen: std::sync::atomic::AtomicUsize,
 }
 impl Handler for Counting {
-	async fn handle(&self, _d: &mut [u8], _f: FdVec, _c: Option<strong_ipc::UCred>) {
+	async fn handle(self: &Arc<Self>, _d: &mut [u8], _f: FdVec, _c: Option<strong_ipc::UCred>) {
 		self.seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 	}
 }
 
 struct Null;
 impl Handler for Null {
-	async fn handle(&self, _d: &mut [u8], _f: FdVec, _c: Option<strong_ipc::UCred>) {}
+	async fn handle(self: &Arc<Self>, _d: &mut [u8], _f: FdVec, _c: Option<strong_ipc::UCred>) {}
 }
 
 fn numbered(seq: u32) -> Message {

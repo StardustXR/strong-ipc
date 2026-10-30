@@ -1,13 +1,19 @@
 //! talks to the `bound_server` example, start that one first
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use strong_ipc::{FdVec, Handler, Message, Node, Ref};
 use tokio_util::sync::CancellationToken;
 
 pub struct ReplyHandler(CancellationToken);
 impl Handler for ReplyHandler {
-	async fn handle(&self, data: &mut [u8], _fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		_fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		println!("reply: {}", String::from_utf8_lossy(data));
 		self.0.cancel();
 	}

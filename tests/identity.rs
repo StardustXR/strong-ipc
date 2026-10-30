@@ -10,6 +10,7 @@
 //! peer rather than to the arrival, so a node handed the same capability repeatedly
 //! builds it once.
 
+use std::sync::Arc;
 use std::time::Duration;
 use strong_ipc::{FdVec, Handler, Message, Node, Ref};
 use tokio::sync::mpsc;
@@ -20,7 +21,12 @@ struct Collect {
 }
 
 impl Handler for Collect {
-	async fn handle(&self, _data: &mut [u8], fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		_data: &mut [u8],
+		fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		let _ = self
 			.tx
 			.send(fds.into_iter().map(Ref::from_owned_fd).collect());

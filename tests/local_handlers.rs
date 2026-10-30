@@ -20,12 +20,12 @@ use strong_ipc::{FdVec, Handler, Message, Node, Ref, UCred};
 
 struct Counter(&'static str);
 impl Handler for Counter {
-	async fn handle(&self, _data: &mut [u8], _fds: FdVec, _creds: Option<UCred>) {}
+	async fn handle(self: &Arc<Self>, _data: &mut [u8], _fds: FdVec, _creds: Option<UCred>) {}
 }
 
 struct Other;
 impl Handler for Other {
-	async fn handle(&self, _data: &mut [u8], _fds: FdVec, _creds: Option<UCred>) {}
+	async fn handle(self: &Arc<Self>, _data: &mut [u8], _fds: FdVec, _creds: Option<UCred>) {}
 }
 
 /// bounces `node_ref` through a real socket and hands back what came out the far side
@@ -53,7 +53,7 @@ struct Echo {
 	received: std::sync::Mutex<Option<Ref>>,
 }
 impl Handler for Echo {
-	async fn handle(&self, _data: &mut [u8], mut fds: FdVec, _creds: Option<UCred>) {
+	async fn handle(self: &Arc<Self>, _data: &mut [u8], mut fds: FdVec, _creds: Option<UCred>) {
 		if let Some(fd) = fds.pop() {
 			*self.received.lock().unwrap() = Some(Ref::from_owned_fd(fd));
 		}

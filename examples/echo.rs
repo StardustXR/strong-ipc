@@ -1,10 +1,16 @@
+use std::sync::Arc;
 use std::time::Duration;
 use strong_ipc::{FdVec, Handler, Message, Node, Ref};
 use tokio_util::sync::CancellationToken;
 
 pub struct EchoHandler;
 impl Handler for EchoHandler {
-	async fn handle(&self, data: &mut [u8], fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		let return_fd = fds.into_iter().next().unwrap();
 		let return_ref = Ref::from_owned_fd(return_fd);
 		return_ref
@@ -14,7 +20,12 @@ impl Handler for EchoHandler {
 }
 pub struct EchoReplyHandler(CancellationToken);
 impl Handler for EchoReplyHandler {
-	async fn handle(&self, data: &mut [u8], _fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		_fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		println!("Echo response: {}", String::from_utf8_lossy(data));
 		self.0.cancel();
 	}

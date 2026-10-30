@@ -13,6 +13,7 @@
 //! is sized for `MAX_FDS` up front, so both ends of that boundary are covered here.
 
 use std::os::fd::OwnedFd;
+use std::sync::Arc;
 use std::time::Duration;
 use strong_ipc::{FdVec, Handler, Message, Node};
 
@@ -21,7 +22,12 @@ struct CountFds {
 }
 
 impl Handler for CountFds {
-	async fn handle(&self, _data: &mut [u8], fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		_data: &mut [u8],
+		fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		// dropping `fds` here is what closes the descriptors the kernel duped into us,
 		// so a leak would show up as this test running out of descriptors
 		let _ = self.tx.send(fds.len());

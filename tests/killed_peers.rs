@@ -18,6 +18,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 use strong_ipc::{FdVec, Handler, Message, Node, Ref, RefFsBinding, TrySendError};
 
@@ -32,7 +33,7 @@ fn socket_path(name: &str) -> PathBuf {
 
 struct Null;
 impl Handler for Null {
-	async fn handle(&self, _d: &mut [u8], _f: FdVec, _c: Option<strong_ipc::UCred>) {}
+	async fn handle(self: &Arc<Self>, _d: &mut [u8], _f: FdVec, _c: Option<strong_ipc::UCred>) {}
 }
 
 /// tells the child process which end of the capability it is, and where to meet
@@ -142,7 +143,7 @@ struct Announcing {
 	tx: tokio::sync::mpsc::UnboundedSender<()>,
 }
 impl Handler for Announcing {
-	async fn handle(&self, _d: &mut [u8], _f: FdVec, _c: Option<strong_ipc::UCred>) {
+	async fn handle(self: &Arc<Self>, _d: &mut [u8], _f: FdVec, _c: Option<strong_ipc::UCred>) {
 		let _ = self.tx.send(());
 	}
 }

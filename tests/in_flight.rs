@@ -60,7 +60,7 @@ impl Stalled {
 	}
 }
 impl Handler for Stalled {
-	async fn handle(&self, data: &mut [u8], fds: FdVec, _: Option<strong_ipc::UCred>) {
+	async fn handle(self: &Arc<Self>, data: &mut [u8], fds: FdVec, _: Option<strong_ipc::UCred>) {
 		self.permits.acquire().await.unwrap().forget();
 		self.seen.lock().unwrap().push((data[0], fds.len()));
 	}

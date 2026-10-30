@@ -5,11 +5,17 @@
 //! every capability after that rides along as an fd
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use strong_ipc::{FdVec, Handler, Message, Node, Ref, RefFsBinding};
 
 pub struct EchoHandler;
 impl Handler for EchoHandler {
-	async fn handle(&self, data: &mut [u8], fds: FdVec, _creds: Option<strong_ipc::UCred>) {
+	async fn handle(
+		self: &Arc<Self>,
+		data: &mut [u8],
+		fds: FdVec,
+		_creds: Option<strong_ipc::UCred>,
+	) {
 		let text = String::from_utf8_lossy(data).into_owned();
 		// an accepted conn has no ref back out, so the client hands us one to reply on
 		// in-band, as an fd on the message

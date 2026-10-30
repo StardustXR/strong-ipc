@@ -12,8 +12,10 @@ use std::{mem::MaybeUninit, ops::Deref, os::fd::AsFd, sync::Arc};
 use tokio_util::task::AbortOnDrop;
 
 pub trait Handler: Send + Sync + 'static {
+	/// takes the `Arc` so a handler can clone itself into a spawned task and let the next
+	/// message in, the receive loop waits on this future before reading another
 	fn handle(
-		&self,
+		self: &Arc<Self>,
 		data: &mut [u8],
 		fds: FdVec,
 		creds: Option<UCred>,
