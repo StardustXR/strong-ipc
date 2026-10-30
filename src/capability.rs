@@ -577,7 +577,12 @@ mod tests {
 			first.is_same(&second),
 			"a dup of the socket was not recognised"
 		);
-		assert_eq!(REFS.len(), 1, "one socket should occupy one entry");
+		// counted by pointer rather than `REFS.len()`, which other tests file into concurrently
+		let entries = REFS
+			.iter()
+			.filter(|e| Weak::as_ptr(e.value()) == Arc::as_ptr(&first.inner))
+			.count();
+		assert_eq!(entries, 1, "one socket should occupy one entry");
 
 		drop(second);
 		assert!(
